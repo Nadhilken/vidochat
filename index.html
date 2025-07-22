@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anonymous Video & Text Chat</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .welcome, .chat, .searching {
+            display: none;
+        }
+        .active {
+            display: block;
+        }
+        .chat-container {
+            display: flex;
+            gap: 20px;
+        }
+        .chat-log {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: #fafafa;
+        }
+        .video-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        video {
+            width: 100%;
+            max-height: 200px;
+            background: black;
+            border-radius: 4px;
+        }
+        .message {
+            margin: 5px 0;
+        }
+        .system {
+            color: #666;
+            font-style: italic;
+        }
+        input, select, button {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="welcome active" id="welcome">
+            <h2>Anonymous Video & Text Chat</h2>
+            <input type="text" id="nickname" placeholder="Enter nickname" required>
+            <select id="gender">
+                <option value="">Select gender</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+            </select>
+            <select id="ageGroup">
+                <option value="">Select age group</option>
+                <option value="18+">18+</option>
+                <option value="under18">Under 18</option>
+            </select>
+            <button onclick="startMatching()">Find a chat partner</button>
+        </div>
+        <div class="searching" id="searching">
+            <h2>Searching for partner...</h2>
+        </div>
+        <div class="chat" id="chat">
+            <h2>Chat with <span id="partnerNickname"></span></h2>
+            <div class="chat-container">
+                <div class="video-container">
+                    <video id="localVideo" autoplay muted></video>
+                    <video id="remoteVideo" autoplay></video>
+                    <button onclick="toggleVideo()">Toggle Video</button>
+                    <button onclick="toggleAudio()">Toggle Audio</button>
+                </div>
+                <div class="chat-log" id="chatLog"></div>
+            </div>
+            <input type="text" id="message" placeholder="Type a message..." onkeypress="if(event.key === 'Enter') sendMessage()">
+            <button onclick="sendMessage()">Send</button>
+            <button onclick="disconnect()">Disconnect</button>
+        </div>
+    </div>
+
+    <script>
+        // Replace with your backend URL (e.g., https://your-backend.railway.app)
+        const socket = io('https://your-backend-url-here', { transports: ['websocket'] });
+        let currentRoom = null;
+        let peer = null;
+        let localStream = null;
+        let videoEnabled = true;
+        let audioEnabled = true;
+
+        async function startMatching() {
+            const nickname = document.getElementById('nickname').value.trim();
+            const gender = document.getElementById('gender').value;
+            const ageGroup = document.getElementById('ageGroup').value;
+
+            if (!nickname || !gender || !ageGroup) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('localVideo').srcObject = localStream;
+                peer = new Peer({
+                    initiator: false,
+                    trickle: false,
+                    stream: localStream,
+                    config: {
+                        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                    }
+                });
+
+                peer.on('signal', data => {
+                    socket.emit('signal', { room: currentRoom, signalData: data });
+                });
+
+                peer.on('stream', stream => {
+                    document.getElementById('remoteVideo').srcObject = stream;
+                });
+
+                peer.on('error', err => {
+                    console.error('Peer error:', err);
+                    appendMessage('Video chat error.', true);
+                });
+
+                document.getElementById('welcome').classList.remove('active');
+                document.getElementById('searching').classList.add('active');
+                socket.emit('joinQueue', { nickname, gender, ageGroup });
+            } catch (err) {
+                console.error('Media error:', err);
+                alert('Failed to access camera/microphone. Text chat only.');
+                socket.emit('joinQueue', { nickname, gender, ageGroup });
+            }
+        }
+
+        function sendMessage() {
+            const message = document.getElementById('message').value.trim();
+            if (message && currentRoom) {
+                socket.emit('chatMessage', { room: currentRoom, message });
+                appendMessage(`You: ${message}`);
+                document.getElementById('message').value = '';
+            }
+        }
+
+        function toggleVideo() {
+            videoEnabled = !videoEnabled;
+            localStream.getVideoTracks()[0].enabled = videoEnabled;
+            appendMessage(`Video ${videoEnabled ? 'enabled' : 'disabled'}`, true);
+        }
+
+        function toggleAudio() {
+            audioEnabled = !audioEnabled;
+            localStream.getAudioTracks()[0].enabled = audioEnabled;
+            appendMessage(`Audio ${audioEnabled ? 'enabled' : 'disabled'}`, true);
+        }
+
+        function disconnect() {
+            if (currentRoom) {
+                socket.emit('leaveRoom', currentRoom);
+            }
+            cleanup();
+        }
+
+        function cleanup() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            if (peer) {
+                peer.destroy();
+                peer = null;
+            }
+            showWelcome();
+        }
+
+        function appendMessage(message, isSystem = false) {
+            const chatLog = document.getElementById('chatLog');
+            const div = document.createElement('div');
+            div.className = 'message' + (isSystem ? ' system' : '');
+            div.textContent = message;
+            chatLog.appendChild(div);
+            chatLog.scrollTop = chatLog.scrollHeight;
+        }
+
+        function showWelcome() {
+            document.getElementById('chat').classList.remove('active');
+            document.getElementById('searching').classList.remove('active');
+            document.getElementById('welcome').classList.add('active');
+            document.getElementById('chatLog').innerHTML = '';
+            document.getElementById('localVideo').srcObject = null;
+            document.getElementById('remoteVideo').srcObject = null;
+            currentRoom = null;
+        }
+
+        socket.on('matched', ({ room, partnerNickname, initiator }) => {
+            currentRoom = room;
+            if (initiator) {
+                peer = new Peer({
+                    initiator: true,
+                    trickle: false,
+                    stream: localStream,
+                    config: {
+                        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                    }
+                });
+
+                peer.on('signal', data => {
+                    socket.emit('signal', { room: currentRoom, signalData: data });
+                });
+
+                peer.on('stream', stream => {
+                    document.getElementById('remoteVideo').srcObject = stream;
+                });
+
+                peer.on('error', err => {
+                    console.error('Peer error:', err);
+                    appendMessage('Video chat error.', true);
+                });
+            }
+
+            document.getElementById('searching').classList.remove('active');
+            document.getElementById('chat').classList.add('active');
+            document.getElementById('partnerNickname').textContent = partnerNickname;
+            appendMessage(`You are now chatting with ${partnerNickname}`, true);
+        });
+
+        socket.on('signal', ({ signalData }) => {
+            if (peer) {
+                peer.signal(signalData);
+            }
+        });
+
+        socket.on('message', (message) => {
+            appendMessage(`${document.getElementById('partnerNickname').textContent}: ${message}`);
+        });
+
+        socket.on('partnerDisconnected', () => {
+            appendMessage('Partner disconnected.', true);
+            setTimeout(cleanup, 2000);
+        });
+
+        socket.on('error', (message) => {
+            alert(message);
+            cleanup();
+        });
+    </script>
+</body>
+</html>
