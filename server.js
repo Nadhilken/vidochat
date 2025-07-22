@@ -24,7 +24,11 @@ const queues = {
 // Active rooms
 const rooms = new Map();
 
-app.get('/health', (req, res) => res.status(200).send('OK')); // Health check endpoint
+// Root route to avoid "Cannot GET /" error
+app.get('/', (req, res) => res.status(200).send('Video chat backend running'));
+
+// Health check endpoint
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 function findMatch(user) {
     let queue;
