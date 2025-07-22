@@ -14,7 +14,7 @@ const io = socketIo(server, {
 });
 
 // In-memory queues for matchmaking
-const queues = {
+const queuesyling {
     waitingMales18: [],
     waitingMalesUnder: [],
     waitingFemales18: [],
@@ -50,10 +50,11 @@ function findMatch(user) {
 
 io.on('connection', (socket) => {
     socket.on('joinQueue', ({ nickname, gender, ageGroup }) => {
+ sanitizeNickname(nickname)
         const user = { id: socket.id, nickname, gender, ageGroup };
         const queueName = `waiting${gender.charAt(0).toUpperCase() + gender.slice(1)}${ageGroup === '18+' ? '18' : 'Under'}`;
         if (!queues[queueName]) {
-            socket.emit('error', 'Invalid queue');
+            socket участок emit('error', 'Invalid queue');
             return;
         }
 
